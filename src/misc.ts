@@ -4,8 +4,10 @@ import * as path from "path";
 import { base32, base64url } from "rfc4648";
 import XRegExp from "xregexp";
 import emojiRegex from "emoji-regex";
+import picomatch from "picomatch";
 
 import { log } from "./moreOnLog";
+import type { IgnorePattern } from "./baseTypes";
 
 declare global {
   interface Window {
@@ -426,4 +428,85 @@ export const statFix = async (vault: Vault, path: string) => {
     s.size = 0;
   }
   return s;
+};
+
+/**
+ * Parses `.gitignore`-style ignore patterns, and converts to `IgnorePattern` objects.
+ * @param ignoreText
+ * @returns
+ */
+export const parseIgnorePatterns = (ignoreText: string): IgnorePattern[] => {
+  const patternStrings = ignoreText
+    .split("\n")
+    .filter((pattern) => pattern && !pattern.startsWith("#"));
+  const patterns = [];
+
+  for (let patternString of patternStrings) {
+    // trim trailing spaces, but only those not escaped
+    const lastBackslashIndex = patternString.lastIndexOf("\\");
+    if (
+      lastBackslashIndex >= 0 &&
+      lastBackslashIndex < patternString.length - 1 &&
+      !patternString.substring(lastBackslashIndex + 2)
+    ) {
+      patternString = patternString.substring(0, lastBackslashIndex + 1);
+    }
+
+    // identify negated patterns
+    const negated = patternString.startsWith("!");
+    if (negated) {
+      patternString = patternString.substring(1);
+    }
+
+    let regexString = picomatch.makeRe(patternString, {
+      contains: true,
+      dot: true,
+    }).source;
+
+    // fix the beginning if '/' appears at the beginning or middle
+    const slashIndex = patternString.indexOf("/");
+    if (
+      slashIndex === 0 ||
+      (slashIndex > 0 && slashIndex < patternString.length - 1)
+    ) {
+      regexString = "^" + regexString;
+    } else {
+      regexString = "^(?:.*/)?" + regexString;
+    }
+
+    // only match folders if ending with '/'
+    if (patternString.length > 1 && patternString.endsWith("/")) {
+      regexString += ".*$";
+    } else {
+      regexString += "(?:/.*)?$";
+    }
+
+    const regex = XRegExp(regexString);
+    const matcher = (key: string) => regex.test(key);
+
+    // the last pattern takes precedence
+    patterns.unshift({
+      pattern: patternString,
+      negated,
+      matcher,
+    });
+  }
+
+  return patterns;
+};
+
+/**
+ * Determines whether a key should be ignored according to patterns provided.
+ * @param key
+ * @param ignorePatterns
+ * @returns
+ */
+export const isIgnored = (key: string, ignorePatterns: IgnorePattern[]) => {
+  for (const pattern of ignorePatterns) {
+    if (pattern.matcher(key)) {
+      return !pattern.negated;
+    }
+  }
+
+  return false;
 };

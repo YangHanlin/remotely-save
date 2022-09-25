@@ -13,6 +13,7 @@ import type {
   DecisionType,
   FileOrFolderMixedState,
   SUPPORTED_SERVICES_TYPE,
+  IgnorePattern,
 } from "./baseTypes";
 import { API_VER_STAT_FOLDER } from "./baseTypes";
 import {
@@ -38,6 +39,8 @@ import {
   atWhichLevel,
   unixTimeToStr,
   statFix,
+  isIgnored,
+  parseIgnorePatterns,
 } from "./misc";
 import { RemoteClient } from "./remote";
 import {
@@ -289,21 +292,15 @@ export const fetchMetadataFile = async (
   return metadata;
 };
 
-const isSkipItem = (
-  key: string,
-  syncConfigDir: boolean,
-  syncUnderscoreItems: boolean,
-  configDir: string
-) => {
-  if (syncConfigDir && isInsideObsFolder(key, configDir)) {
-    return false;
-  }
-  return (
-    isHiddenPath(key, true, false) ||
-    (!syncUnderscoreItems && isHiddenPath(key, false, true)) ||
+const isSkipItem = (key: string, ignorePatterns: IgnorePattern[]) => {
+  if (
     key === DEFAULT_FILE_NAME_FOR_METADATAONREMOTE ||
     key === DEFAULT_FILE_NAME_FOR_METADATAONREMOTE2
-  );
+  ) {
+    return true;
+  }
+
+  return isIgnored(key, ignorePatterns);
 };
 
 const ensembleMixedStates = async (
@@ -319,10 +316,17 @@ const ensembleMixedStates = async (
 ) => {
   const results = {} as Record<string, FileOrFolderMixedState>;
 
+  // convert `syncConfigDir` and `syncUnderscoreItems` to .gitignore-style patterns temporarily
+  const ignoreText = convertPreviousSettingsToIgnoreText(
+    syncConfigDir,
+    syncUnderscoreItems,
+    configDir
+  );
+  const ignorePatterns = parseIgnorePatterns(ignoreText);
+
   for (const r of remoteStates) {
     const key = r.key;
-
-    if (isSkipItem(key, syncConfigDir, syncUnderscoreItems, configDir)) {
+    if (isSkipItem(key, ignorePatterns)) {
       continue;
     }
     results[key] = r;
@@ -361,7 +365,7 @@ const ensembleMixedStates = async (
       throw Error(`unexpected ${entry}`);
     }
 
-    if (isSkipItem(key, syncConfigDir, syncUnderscoreItems, configDir)) {
+    if (isSkipItem(key, ignorePatterns)) {
       continue;
     }
 
@@ -417,7 +421,7 @@ const ensembleMixedStates = async (
       deltimeRemoteFmt: unixTimeToStr(entry.actionWhen),
     } as FileOrFolderMixedState;
 
-    if (isSkipItem(key, syncConfigDir, syncUnderscoreItems, configDir)) {
+    if (isSkipItem(key, ignorePatterns)) {
       continue;
     }
 
@@ -445,7 +449,7 @@ const ensembleMixedStates = async (
       throw Error(`unexpected ${entry}`);
     }
 
-    if (isSkipItem(key, syncConfigDir, syncUnderscoreItems, configDir)) {
+    if (isSkipItem(key, ignorePatterns)) {
       continue;
     }
 
@@ -1468,4 +1472,25 @@ export const doActualSync = async (
       }
     }
   }
+};
+
+const convertPreviousSettingsToIgnoreText = (
+  syncConfigDir: boolean,
+  syncUnderscoreItems: boolean,
+  configDir: string
+) => {
+  let ignoreText = "";
+
+  // ignore files and folders starting with '.' by default
+  ignoreText += ".*\n";
+
+  if (!syncUnderscoreItems) {
+    ignoreText += "_*\n";
+  }
+
+  if (syncConfigDir) {
+    ignoreText += `!${configDir}\n`;
+  }
+
+  return ignoreText;
 };

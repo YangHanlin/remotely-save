@@ -181,3 +181,9 @@ export const DEFAULT_SYNC_PLANS_HISTORY_FILE_PREFIX =
 export const DEFAULT_LOG_HISTORY_FILE_PREFIX = "log_hist_exported_on_";
 
 export type SyncTriggerSourceType = "manual" | "auto" | "dry" | "autoOnceInit";
+
+export interface IgnorePattern {
+  pattern: string;
+  negated: boolean;
+  matcher: (key: string) => boolean;
+}
